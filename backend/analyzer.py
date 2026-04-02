@@ -1,5 +1,6 @@
 import json
 import re
+import asyncio
 import logging
 from typing import Optional
 from groq import AsyncGroq
@@ -16,6 +17,10 @@ MAX_TOKENS = 4096
 TEMPERATURE = 0.4        # Low enough for consistent structured output, high enough for sharp insight
 MAX_RETRIES = 2          # Retry once on JSON parse failure before giving up
 MIN_DESCRIPTION_WORDS = 10  # Gate on manual descriptions being too vague
+RETRY_BACKOFF_SECONDS = 1.5  # Multiplied by attempt number — avoids hammering Groq on overload
+MAX_TRUNCATE_DEPTH = 10  # Recursion depth guard for truncate_strings()
+
+VALID_INPUT_TYPES = {"url", "description"}
 
 # Required top-level keys — if any are missing, the response is considered malformed
 REQUIRED_KEYS = {
@@ -38,8 +43,9 @@ def extract_json(text: str) -> Optional[dict]:
     - Clean JSON responses (ideal)
     - JSON wrapped in ```json ... ``` markdown fences
     - JSON with a preamble/postamble (finds first { ... last })
-    - Trailing commas (common LLM mistake) — stripped before parsing
-    - Single-quoted strings — converted to double quotes
+    - JS-style // comments — stripped before parsing
+    - Trailing commas before ] or } — stripped before parsing
+    - Single-quoted strings — converted to double quotes as last resort
     """
     if not text or not text.strip():
         return None
@@ -126,8 +132,9 @@ def sanitize_teardown(data: dict) -> dict:
     - Clamps overall_score to [1, 10]
     - Ensures kill_or_scale is a valid enum value
     - Ensures severity fields are valid enum values
-    - Strips [Assumed] flags from fields when input was a URL (shouldn't be there)
+    - Ensures opportunity_size and build_or_partner are valid enum values
     - Truncates runaway string fields to prevent frontend overflow
+      (with recursion depth guard to avoid hitting Python's recursion limit)
     """
     # Clamp score
     if "pm_verdict" in data:
@@ -151,24 +158,27 @@ def sanitize_teardown(data: dict) -> dict:
                     if item["severity"] not in valid_severity:
                         item["severity"] = "Medium"
 
-    # Clamp opportunity_size
+    # Clamp opportunity_size and build_or_partner
     valid_opportunity = {"High", "Medium", "Low"}
+    valid_bop = {"Build", "Partner", "Acquire"}
     if "what_is_missing" in data and isinstance(data["what_is_missing"], list):
         for item in data["what_is_missing"]:
             if isinstance(item, dict):
                 if item.get("opportunity_size") not in valid_opportunity:
                     item["opportunity_size"] = "Medium"
-                valid_bop = {"Build", "Partner", "Acquire"}
                 if item.get("build_or_partner") not in valid_bop:
                     item["build_or_partner"] = "Build"
 
     # Truncate runaway string fields (safety net for frontend)
     MAX_FIELD_LEN = 800
-    def truncate_strings(obj):
+
+    def truncate_strings(obj, depth: int = 0):
+        if depth > MAX_TRUNCATE_DEPTH:
+            return obj
         if isinstance(obj, dict):
-            return {k: truncate_strings(v) for k, v in obj.items()}
+            return {k: truncate_strings(v, depth + 1) for k, v in obj.items()}
         elif isinstance(obj, list):
-            return [truncate_strings(i) for i in obj]
+            return [truncate_strings(i, depth + 1) for i in obj]
         elif isinstance(obj, str) and len(obj) > MAX_FIELD_LEN:
             return obj[:MAX_FIELD_LEN] + "…"
         return obj
@@ -227,22 +237,30 @@ async def analyze_product(
 ) -> dict:
     """
     Core analysis pipeline:
-    1. Validate input
+    1. Validate input type and content
     2. Build prompt
-    3. Call Groq (with retry on JSON parse failure)
+    3. Call Groq (with exponential backoff retry on failure)
     4. Extract + validate + sanitize JSON
     5. Return structured result
 
     Returns a dict with:
         success         bool
         data            dict | None  — the full teardown
-        error           str | None   — human-readable error
-        debug           str | None   — internal error code
+        error           str | None   — human-readable error for the frontend
+        debug           str | None   — internal error code for logging
         model           str          — model used
-        attempt         int          — which attempt succeeded
+        attempt         int          — which attempt succeeded (0 = never succeeded)
+        partial         bool         — True if returned despite validation warnings
     """
 
-    # --- Input validation ---
+    # --- Input type validation ---
+    if input_type not in VALID_INPUT_TYPES:
+        return _error_response(
+            "Invalid input type. Must be 'url' or 'description'.",
+            f"invalid_input_type: {input_type}"
+        )
+
+    # --- Content validation ---
     if not content or not content.strip():
         return _error_response("Input content cannot be empty.", "empty_input")
 
@@ -260,7 +278,7 @@ async def analyze_product(
 
     last_debug = None
 
-    # --- Retry loop ---
+    # --- Retry loop with backoff ---
     for attempt in range(1, MAX_RETRIES + 1):
         logger.info(f"Groq call attempt {attempt}/{MAX_RETRIES}")
 
@@ -269,7 +287,9 @@ async def analyze_product(
         if api_error:
             last_debug = api_error
             if attempt < MAX_RETRIES:
-                logger.warning(f"Attempt {attempt} API error: {api_error} — retrying...")
+                backoff = RETRY_BACKOFF_SECONDS * attempt
+                logger.warning(f"Attempt {attempt} API error: {api_error} — retrying in {backoff}s...")
+                await asyncio.sleep(backoff)
                 continue
             break
 
@@ -279,7 +299,9 @@ async def analyze_product(
             last_debug = f"json_parse_failed_attempt_{attempt}"
             logger.warning(f"Attempt {attempt}: JSON extraction failed. Raw snippet: {raw_text[:300]}")
             if attempt < MAX_RETRIES:
-                logger.info("Retrying with same prompt...")
+                backoff = RETRY_BACKOFF_SECONDS * attempt
+                logger.info(f"Retrying in {backoff}s...")
+                await asyncio.sleep(backoff)
                 continue
             break
 
@@ -289,8 +311,10 @@ async def analyze_product(
             last_debug = f"validation_failed: missing={missing_fields}"
             logger.warning(f"Attempt {attempt}: Validation failed. Missing: {missing_fields}")
             if attempt < MAX_RETRIES:
+                backoff = RETRY_BACKOFF_SECONDS * attempt
+                await asyncio.sleep(backoff)
                 continue
-            # On final attempt, return what we have with a warning
+            # On final attempt, return what we have with a partial warning
             logger.warning("Returning partially valid teardown after all retries.")
             sanitized = sanitize_teardown(parsed)
             return {
@@ -305,7 +329,11 @@ async def analyze_product(
 
         # --- Sanitize + return ---
         sanitized = sanitize_teardown(parsed)
-        logger.info(f"Teardown complete on attempt {attempt}. Score: {sanitized.get('pm_verdict', {}).get('overall_score')}")
+        logger.info(
+            f"Teardown complete on attempt {attempt}. "
+            f"Score: {sanitized.get('pm_verdict', {}).get('overall_score')} | "
+            f"Verdict: {sanitized.get('pm_verdict', {}).get('kill_or_scale')}"
+        )
 
         return {
             "success": True,
@@ -330,6 +358,7 @@ async def analyze_product(
 # ---------------------------------------------------------------------------
 
 def _error_response(human_error: str, debug: str) -> dict:
+    """Consistent error shape — frontend can always destructure the same keys."""
     return {
         "success": False,
         "data": None,
