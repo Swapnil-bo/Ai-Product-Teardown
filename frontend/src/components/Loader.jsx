@@ -17,9 +17,14 @@ export default function Loader({ isVisible = true }) {
   const [progress, setProgress] = useState(0);
   const [dots, setDots] = useState("");
 
-  // Cycle through analysis steps
+  // Cycle through analysis steps + reset on hide (collapsed into one effect)
   useEffect(() => {
-    if (!isVisible) return;
+    if (!isVisible) {
+      setCurrentStep(0);
+      setProgress(0);
+      setDots("");
+      return;
+    }
 
     const stepInterval = setInterval(() => {
       setCurrentStep((prev) =>
@@ -31,6 +36,7 @@ export default function Loader({ isVisible = true }) {
   }, [isVisible]);
 
   // Fake progress bar — never hits 100 until done
+  // Uses fixed-precision math to prevent floating point drift in % display
   useEffect(() => {
     if (!isVisible) return;
 
@@ -38,7 +44,7 @@ export default function Loader({ isVisible = true }) {
       setProgress((prev) => {
         if (prev >= 92) return prev; // stall near the end — feels real
         const increment = prev < 40 ? 3 : prev < 70 ? 1.5 : 0.5;
-        return Math.min(prev + increment, 92);
+        return Math.min(Math.round((prev + increment) * 10) / 10, 92);
       });
     }, 180);
 
@@ -48,33 +54,26 @@ export default function Loader({ isVisible = true }) {
   // Animated ellipsis
   useEffect(() => {
     if (!isVisible) return;
+
     const dotsInterval = setInterval(() => {
       setDots((prev) => (prev.length >= 3 ? "" : prev + "."));
     }, 400);
-    return () => clearInterval(dotsInterval);
-  }, [isVisible]);
 
-  // Reset on hide
-  useEffect(() => {
-    if (!isVisible) {
-      setCurrentStep(0);
-      setProgress(0);
-      setDots("");
-    }
+    return () => clearInterval(dotsInterval);
   }, [isVisible]);
 
   if (!isVisible) return null;
 
   return (
-    <div className="loader-overlay animate-fade-in">
+    <div className="loader-overlay animate-fade-in" role="dialog" aria-modal="true" aria-label="Analyzing product">
       {/* Ambient glow */}
-      <div className="loader-glow" />
+      <div className="loader-glow" aria-hidden="true" />
 
       <div className="loader-card animate-scale-in">
 
         {/* Header */}
         <div className="loader-header">
-          <div className="loader-icon">
+          <div className="loader-icon" aria-hidden="true">
             <div className="loader-icon__ring" />
             <div className="loader-icon__ring loader-icon__ring--2" />
             <span className="loader-icon__symbol">⬡</span>
@@ -88,7 +87,14 @@ export default function Loader({ isVisible = true }) {
         </div>
 
         {/* Progress bar */}
-        <div className="loader-progress-track">
+        <div
+          className="loader-progress-track"
+          role="progressbar"
+          aria-valuenow={Math.round(progress)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Analysis progress"
+        >
           <div
             className="loader-progress-fill"
             style={{ width: `${progress}%` }}
@@ -96,21 +102,28 @@ export default function Loader({ isVisible = true }) {
           <div
             className="loader-progress-glow"
             style={{ left: `${progress}%` }}
+            aria-hidden="true"
           />
         </div>
 
-        {/* Step indicator */}
-        <div className="loader-step">
-          <span className="loader-step__icon">›</span>
+        {/* Step indicator — aria-live so screen readers announce step changes */}
+        <div
+          className="loader-step"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span className="loader-step__icon" aria-hidden="true">›</span>
           <span className="loader-step__text">
             {ANALYSIS_STEPS[currentStep]}
-            <span className="loader-step__dots">{dots}</span>
+            <span className="loader-step__dots" aria-hidden="true">{dots}</span>
           </span>
-          <span className="loader-step__pct">{Math.round(progress)}%</span>
+          <span className="loader-step__pct" aria-hidden="true">
+            {Math.round(progress)}%
+          </span>
         </div>
 
         {/* Dot grid — the signature visual */}
-        <div className="loader-dot-grid">
+        <div className="loader-dot-grid" aria-hidden="true">
           {Array.from({ length: 25 }).map((_, i) => (
             <div
               key={i}
@@ -123,7 +136,7 @@ export default function Loader({ isVisible = true }) {
         </div>
 
         {/* Step pills */}
-        <div className="loader-steps-track">
+        <div className="loader-steps-track" aria-hidden="true">
           {ANALYSIS_STEPS.map((_, i) => (
             <div
               key={i}
@@ -204,7 +217,7 @@ export default function Loader({ isVisible = true }) {
           );
         }
 
-        /* Corner brackets — war room aesthetic */
+        /* Corner bracket — war room aesthetic */
         .loader-card::after {
           content: '';
           position: absolute;
@@ -437,6 +450,13 @@ export default function Loader({ isVisible = true }) {
           text-align: center;
           letter-spacing: 0.04em;
           max-width: none;
+        }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 480px) {
+          .loader-card {
+            padding: var(--space-6) var(--space-5);
+          }
         }
       `}</style>
     </div>
