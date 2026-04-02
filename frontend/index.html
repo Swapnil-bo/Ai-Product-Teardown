@@ -1,14 +1,186 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="AI-powered PM teardowns. Drop a URL or describe a product — get brutal, insightful analysis instantly." />
-    <title>AI Product Teardown</title>
+
+    <!-- Primary Meta -->
+    <title>AI Product Teardown — PM-Style Analysis, Instantly</title>
+    <meta name="description" content="Drop a product URL or description. Get a brutal, board-room-grade PM teardown — target users, pain points, monetization gaps, and what's missing. Powered by LLaMA 3.3 70B." />
+    <meta name="author" content="Swapnil Hazra" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ai-product-teardown.vercel.app/" />
+    <meta property="og:title" content="AI Product Teardown — PM-Style Analysis, Instantly" />
+    <meta property="og:description" content="Drop a URL. Get a brutal PM teardown — target users, pain points, monetization gaps, and what's missing. Powered by LLaMA 3.3 70B on Groq." />
+    <meta property="og:image" content="/og-image.png" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:creator" content="@SwapnilHazra4" />
+    <meta name="twitter:title" content="AI Product Teardown — PM-Style Analysis, Instantly" />
+    <meta name="twitter:description" content="Drop a URL. Get a brutal PM teardown — target users, pain points, monetization gaps, and what's missing." />
+    <meta name="twitter:image" content="/og-image.png" />
+
+    <!-- Favicon — inline SVG emoji trick, no file needed -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔬</text></svg>" />
+
+    <!-- Preconnect -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!--
+      Typography:
+      - Syne           → Display / headings — geometric, authoritative, unforgettable
+      - IBM Plex Mono  → Data, scores, labels — technical precision
+      - Instrument Sans → Body / UI — sharp, editorial, not Inter
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+
+    <!-- Design tokens — set here so they're available before React mounts (no FOUC) -->
+    <style>
+      :root {
+        /* Background layers */
+        --bg-base:        #0a0a0a;
+        --bg-surface:     #111111;
+        --bg-elevated:    #161616;
+        --bg-overlay:     #1c1c1c;
+
+        /* Brand accent — blood orange: analytical aggression */
+        --accent:         #e8500a;
+        --accent-dim:     #c44208;
+        --accent-glow:    rgba(232, 80, 10, 0.15);
+        --accent-subtle:  rgba(232, 80, 10, 0.07);
+
+        /* Secondary accent — amber: data, scores */
+        --amber:          #f0a500;
+        --amber-dim:      rgba(240, 165, 0, 0.15);
+
+        /* Status colors */
+        --green:          #22c55e;
+        --green-dim:      rgba(34, 197, 94, 0.12);
+        --red:            #ef4444;
+        --red-dim:        rgba(239, 68, 68, 0.12);
+        --yellow:         #eab308;
+        --yellow-dim:     rgba(234, 179, 8, 0.12);
+
+        /* Typography */
+        --text-primary:   #f0ede8;
+        --text-secondary: #9a9490;
+        --text-muted:     #5a5652;
+        --text-inverse:   #0a0a0a;
+
+        /* Borders */
+        --border:         rgba(240, 237, 232, 0.07);
+        --border-strong:  rgba(240, 237, 232, 0.14);
+        --border-accent:  rgba(232, 80, 10, 0.35);
+
+        /* Fonts */
+        --font-display:   'Syne', sans-serif;
+        --font-body:      'Instrument Sans', sans-serif;
+        --font-mono:      'IBM Plex Mono', monospace;
+
+        /* Spacing scale */
+        --space-1:  4px;
+        --space-2:  8px;
+        --space-3:  12px;
+        --space-4:  16px;
+        --space-5:  24px;
+        --space-6:  32px;
+        --space-7:  48px;
+        --space-8:  64px;
+        --space-9:  96px;
+        --space-10: 128px;
+
+        /* Radius */
+        --radius-sm:  4px;
+        --radius-md:  8px;
+        --radius-lg:  12px;
+        --radius-xl:  16px;
+
+        /* Shadows */
+        --shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
+        --shadow-md:  0 4px 16px rgba(0,0,0,0.5);
+        --shadow-lg:  0 8px 40px rgba(0,0,0,0.7);
+        --shadow-accent: 0 0 32px rgba(232, 80, 10, 0.2);
+
+        /* Transitions */
+        --transition-fast:   150ms cubic-bezier(0.4, 0, 0.2, 1);
+        --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+        --transition-slow:   400ms cubic-bezier(0.4, 0, 0.2, 1);
+
+        /* Layout */
+        --max-width: 1200px;
+        --content-width: 860px;
+      }
+
+      /* Hard reset before React mounts — eliminates any flash */
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        background-color: var(--bg-base);
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+        scroll-behavior: smooth;
+      }
+
+      body {
+        background-color: var(--bg-base);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      /* Custom scrollbar */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: var(--bg-base); }
+      ::-webkit-scrollbar-thumb {
+        background: var(--bg-overlay);
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+      /* Selection */
+      ::selection {
+        background: var(--accent-glow);
+        color: var(--text-primary);
+      }
+
+      /* Loading state — shown until React mounts */
+      #root:empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-muted);
+        letter-spacing: 0.08em;
+      }
+
+      #root:empty::after {
+        content: 'initializing teardown engine...';
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 0.4; }
+        50%       { opacity: 1; }
+      }
+    </style>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
