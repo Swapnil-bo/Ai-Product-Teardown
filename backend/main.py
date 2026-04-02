@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 import logging
 import asyncio
 from contextlib import asynccontextmanager
@@ -41,44 +42,63 @@ ALLOWED_ORIGINS = os.getenv(
 # Rate limiting (in-memory, per IP)
 # ---------------------------------------------------------------------------
 
-REQUEST_LIMIT = 10        # max requests per window
-WINDOW_SECONDS = 60       # rolling window in seconds
+REQUEST_LIMIT = 10       # max requests per window
+WINDOW_SECONDS = 60      # rolling window in seconds
 
-_rate_store: dict[str, list[float]] = {}  # ip -> list of request timestamps
+_rate_store: dict[str, list[float]] = {}   # ip -> list of request timestamps
+_rate_lock = asyncio.Lock()                # guards _rate_store against async race conditions
 
-def is_rate_limited(ip: str) -> tuple[bool, int]:
+
+async def is_rate_limited(ip: str) -> tuple[bool, int]:
     """
-    Simple in-memory sliding window rate limiter.
+    Async-safe sliding window rate limiter.
+    Uses a lock to prevent race conditions under concurrent requests.
     Returns (is_limited, retry_after_seconds).
     """
-    now = time.time()
-    window_start = now - WINDOW_SECONDS
+    async with _rate_lock:
+        now = time.time()
+        window_start = now - WINDOW_SECONDS
 
-    timestamps = _rate_store.get(ip, [])
-    timestamps = [t for t in timestamps if t > window_start]  # prune old
+        timestamps = _rate_store.get(ip, [])
+        timestamps = [t for t in timestamps if t > window_start]  # prune old
 
-    if len(timestamps) >= REQUEST_LIMIT:
-        oldest = timestamps[0]
-        retry_after = int(WINDOW_SECONDS - (now - oldest)) + 1
+        if len(timestamps) >= REQUEST_LIMIT:
+            oldest = timestamps[0]
+            retry_after = int(WINDOW_SECONDS - (now - oldest)) + 1
+            _rate_store[ip] = timestamps
+            return True, retry_after
+
+        timestamps.append(now)
         _rate_store[ip] = timestamps
-        return True, retry_after
-
-    timestamps.append(now)
-    _rate_store[ip] = timestamps
-    return False, 0
+        return False, 0
 
 
 async def cleanup_rate_store():
     """Background task — prunes stale IPs from the rate store every 5 minutes."""
     while True:
         await asyncio.sleep(300)
-        now = time.time()
-        window_start = now - WINDOW_SECONDS
-        stale = [ip for ip, ts in _rate_store.items() if not any(t > window_start for t in ts)]
-        for ip in stale:
-            del _rate_store[ip]
+        async with _rate_lock:
+            now = time.time()
+            window_start = now - WINDOW_SECONDS
+            stale = [
+                ip for ip, ts in _rate_store.items()
+                if not any(t > window_start for t in ts)
+            ]
+            for ip in stale:
+                del _rate_store[ip]
         if stale:
             logger.info(f"Rate store cleanup: removed {len(stale)} stale IPs")
+
+# ---------------------------------------------------------------------------
+# Client error debug codes
+# These are errors caused by bad input — should return 422, not 502
+# ---------------------------------------------------------------------------
+
+CLIENT_DEBUG_CODES = {
+    "empty_input",
+    "description_too_short",
+    "invalid_input_type",
+}
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -132,7 +152,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 class AnalyzeRequest(BaseModel):
-    input_type: str          # "url" | "description"
+    input_type: str           # "url" | "description"
     url: Optional[str] = None
     description: Optional[str] = None
 
@@ -164,6 +184,7 @@ class AnalyzeResponse(BaseModel):
     scrape_method: Optional[str] = None
     char_count: Optional[int] = None
     processing_time_ms: Optional[int] = None
+    request_id: Optional[str] = None
 
 # ---------------------------------------------------------------------------
 # Global exception handler
@@ -182,20 +203,31 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # ---------------------------------------------------------------------------
-# Middleware — request logging + timing
+# Middleware — request logging + timing + X-Request-ID
 # ---------------------------------------------------------------------------
 
 @app.middleware("http")
 async def request_logger(request: Request, call_next):
     start = time.time()
+    request_id = str(uuid.uuid4())[:8]
+
+    # Attach request_id to request state so routes can access it if needed
+    request.state.request_id = request_id
+
     response = await call_next(request)
+
     duration_ms = int((time.time() - start) * 1000)
+    client_ip = request.client.host if request.client else "unknown"
+
     logger.info(
-        f"{request.method} {request.url.path} | "
+        f"[{request_id}] {request.method} {request.url.path} | "
         f"status={response.status_code} | "
         f"time={duration_ms}ms | "
-        f"ip={request.client.host}"
+        f"ip={client_ip}"
     )
+
+    # Surface request ID to the client — essential for correlating bug reports to logs
+    response.headers["X-Request-ID"] = request_id
     return response
 
 # ---------------------------------------------------------------------------
@@ -229,6 +261,7 @@ async def health():
 @app.post("/analyze", response_model=AnalyzeResponse, tags=["Teardown"])
 async def analyze(request: Request, body: AnalyzeRequest):
     start_time = time.time()
+    request_id = getattr(request.state, "request_id", "unknown")
 
     # --- API key check ---
     if not GROQ_API_KEY:
@@ -238,10 +271,10 @@ async def analyze(request: Request, body: AnalyzeRequest):
         )
 
     # --- Rate limiting ---
-    client_ip = request.client.host
-    limited, retry_after = is_rate_limited(client_ip)
+    client_ip = request.client.host if request.client else "unknown"
+    limited, retry_after = await is_rate_limited(client_ip)
     if limited:
-        logger.warning(f"Rate limit hit: {client_ip}")
+        logger.warning(f"[{request_id}] Rate limit hit: {client_ip}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
@@ -263,11 +296,11 @@ async def analyze(request: Request, body: AnalyzeRequest):
                 detail=url_error
             )
 
-        logger.info(f"Scraping URL: {url}")
+        logger.info(f"[{request_id}] Scraping URL: {url}")
         scrape_result = await scrape_url(url)
 
         if not scrape_result["success"]:
-            logger.warning(f"Scrape failed: {scrape_result['debug']}")
+            logger.warning(f"[{request_id}] Scrape failed: {scrape_result['debug']}")
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=scrape_result["error"]
@@ -276,16 +309,16 @@ async def analyze(request: Request, body: AnalyzeRequest):
         content = scrape_result["content"]
         scrape_method = scrape_result["method"]
         char_count = scrape_result["char_count"]
-        logger.info(f"Scrape success via {scrape_method} | {char_count} chars")
+        logger.info(f"[{request_id}] Scrape success via {scrape_method} | {char_count} chars")
 
     # --- Description path ---
     elif body.input_type == "description":
         content = body.description.strip()
         char_count = len(content)
-        logger.info(f"Description input | {char_count} chars")
+        logger.info(f"[{request_id}] Description input | {char_count} chars")
 
     # --- Analyze ---
-    logger.info(f"Starting teardown | input_type={body.input_type}")
+    logger.info(f"[{request_id}] Starting teardown | input_type={body.input_type}")
     result = await analyze_product(
         input_type=body.input_type,
         content=content,
@@ -295,14 +328,22 @@ async def analyze(request: Request, body: AnalyzeRequest):
     processing_time_ms = int((time.time() - start_time) * 1000)
 
     if not result["success"]:
-        logger.warning(f"Analysis failed: {result['debug']}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=result["error"]
+        debug_code = result.get("debug", "")
+        logger.warning(f"[{request_id}] Analysis failed: {debug_code}")
+
+        # Client errors (bad input) → 422. Upstream failures → 502.
+        is_client_error = any(
+            debug_code.startswith(code) for code in CLIENT_DEBUG_CODES
         )
+        status_code = (
+            status.HTTP_422_UNPROCESSABLE_ENTITY
+            if is_client_error
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=status_code, detail=result["error"])
 
     logger.info(
-        f"Teardown complete | "
+        f"[{request_id}] Teardown complete | "
         f"score={result['data'].get('pm_verdict', {}).get('overall_score')} | "
         f"verdict={result['data'].get('pm_verdict', {}).get('kill_or_scale')} | "
         f"time={processing_time_ms}ms"
@@ -317,5 +358,6 @@ async def analyze(request: Request, body: AnalyzeRequest):
         partial=result["partial"],
         scrape_method=scrape_method,
         char_count=char_count,
-        processing_time_ms=processing_time_ms
+        processing_time_ms=processing_time_ms,
+        request_id=request_id
     )
