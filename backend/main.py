@@ -37,13 +37,13 @@ ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://localhost:3000"
 ).split(",")
+REQUEST_LIMIT = int(os.getenv("REQUEST_LIMIT", 10))
+WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", 60))
+ENV = os.getenv("ENV", "development")
 
 # ---------------------------------------------------------------------------
 # Rate limiting (in-memory, per IP)
 # ---------------------------------------------------------------------------
-
-REQUEST_LIMIT = 10       # max requests per window
-WINDOW_SECONDS = 60      # rolling window in seconds
 
 _rate_store: dict[str, list[float]] = {}   # ip -> list of request timestamps
 _rate_lock = asyncio.Lock()                # guards _rate_store against async race conditions
@@ -135,8 +135,8 @@ app = FastAPI(
     description="PM-style product teardowns powered by LLaMA 3.3 70B on Groq.",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if ENV == "development" else None,
+    redoc_url="/redoc" if ENV == "development" else None,
 )
 
 app.add_middleware(
