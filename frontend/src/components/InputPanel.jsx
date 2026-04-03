@@ -139,7 +139,7 @@ const INPUT_STYLES = `
     box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-lg);
   }
 
-  /* Top accent line */
+  /* Top accent line — revealed on focus */
   .input-card::before {
     content: '';
     position: absolute;
@@ -192,7 +192,7 @@ const INPUT_STYLES = `
     bottom: -1px;
   }
 
-  .input-tab:hover:not(.input-tab--active) {
+  .input-tab:hover:not(.input-tab--active):not(:disabled) {
     color: var(--text-secondary);
     background: var(--bg-elevated);
   }
@@ -202,6 +202,11 @@ const INPUT_STYLES = `
     background: var(--bg-surface);
     border-color: var(--border);
     border-bottom-color: var(--bg-surface);
+  }
+
+  .input-tab:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .input-tab__icon {
@@ -373,10 +378,15 @@ const INPUT_STYLES = `
     white-space: nowrap;
   }
 
-  .example-chip:hover {
+  .example-chip:hover:not(:disabled) {
     color: var(--accent);
     background: var(--accent-subtle);
     border-color: var(--border-accent);
+  }
+
+  .example-chip:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   /* ── Submit row ── */
@@ -476,7 +486,7 @@ const INPUT_STYLES = `
     transform: translateX(3px);
   }
 
-  /* Loading state shimmer on button */
+  /* Loading shimmer on button */
   .submit-btn--loading {
     pointer-events: none;
   }
@@ -684,7 +694,7 @@ const MAX_DESCRIPTION_CHARS = 2000;
 const MIN_DESCRIPTION_CHARS = 40;
 
 const URL_EXAMPLES = [
-  { label: "Notion", value: "https://notion.so" },
+  { label: "Notion", value: "https://notion.so"  },
   { label: "Linear", value: "https://linear.app" },
   { label: "Figma",  value: "https://figma.com"  },
   { label: "Vercel", value: "https://vercel.com" },
@@ -710,19 +720,19 @@ const DESC_EXAMPLES = [
 
 const HOW_STEPS = [
   {
-    num: "01",
+    num:   "01",
     title: "Drop a URL or describe it",
-    desc: "Paste any product URL or write a few sentences about what the product does.",
+    desc:  "Paste any product URL or write a few sentences about what the product does.",
   },
   {
-    num: "02",
+    num:   "02",
     title: "LLaMA 3.3 70B analyzes",
-    desc: "Our prompt extracts personas, pain points, monetization, moat, gaps, and red flags.",
+    desc:  "Our prompt extracts personas, pain points, monetization, moat, gaps, and red flags.",
   },
   {
-    num: "03",
+    num:   "03",
     title: "Get the teardown",
-    desc: "A full PM-grade teardown with a score, verdict, and board-room-ready insights.",
+    desc:  "A full PM-grade teardown with a score, verdict, and board-room-ready insights.",
   },
 ];
 
@@ -746,21 +756,22 @@ function isValidUrl(url) {
 export default function InputPanel({ onResult, onLoadingChange }) {
   useInjectStyles(INPUT_STYLES);
 
-  const [tab, setTab]               = useState("url");      // "url" | "description"
-  const [url, setUrl]               = useState("");
-  const [description, setDesc]      = useState("");
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState(null);
-  const urlInputRef                 = useRef(null);
-  const descInputRef                = useRef(null);
-  const abortRef                    = useRef(null);          // AbortController ref
+  const [tab, setTab]          = useState("url");   // "url" | "description"
+  const [url, setUrl]          = useState("");
+  const [description, setDesc] = useState("");
+  const [loading, setLoading]  = useState(false);
+  const [error, setError]      = useState(null);
+
+  const urlInputRef  = useRef(null);
+  const descInputRef = useRef(null);
+  const abortRef     = useRef(null);   // AbortController for in-flight requests
 
   // Sync loading state up to App
   useEffect(() => {
     onLoadingChange?.(loading);
   }, [loading, onLoadingChange]);
 
-  // Focus the active input when tab changes
+  // Focus the active input when tab changes + clear stale errors
   useEffect(() => {
     setError(null);
     if (tab === "url") {
@@ -770,16 +781,16 @@ export default function InputPanel({ onResult, onLoadingChange }) {
     }
   }, [tab]);
 
-  // Abort in-flight request on unmount
+  // Abort any in-flight request on unmount
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
   // ── Derived state ──
-  const descLength  = description.length;
-  const descOver    = descLength > MAX_DESCRIPTION_CHARS;
-  const descWarn    = descLength > MAX_DESCRIPTION_CHARS * 0.85;
-  const canSubmit   = !loading && !descOver && (
+  const descLength = description.length;
+  const descOver   = descLength > MAX_DESCRIPTION_CHARS;
+  const descWarn   = descLength > MAX_DESCRIPTION_CHARS * 0.85;
+  const canSubmit  = !loading && !descOver && (
     tab === "url"
       ? url.trim().length > 0
       : description.trim().length >= MIN_DESCRIPTION_CHARS
@@ -823,7 +834,7 @@ export default function InputPanel({ onResult, onLoadingChange }) {
 
     setLoading(true);
 
-    // Abort any previous in-flight request
+    // Abort any previous in-flight request before starting a new one
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
@@ -834,46 +845,54 @@ export default function InputPanel({ onResult, onLoadingChange }) {
           : { input_type: "description", description: description.trim() };
 
       const res = await fetch("/analyze", {
-        method: "POST",
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: abortRef.current.signal,
+        body:    JSON.stringify(body),
+        signal:  abortRef.current.signal,
       });
 
       const json = await res.json();
 
       if (!res.ok) {
-        // FastAPI sends error detail as a string
+        // Surface X-Request-ID in error message for easier log correlation
+        const requestId = res.headers.get("X-Request-ID");
         const msg =
           typeof json.detail === "string"
             ? json.detail
             : json.error || "Something went wrong. Please try again.";
-        throw new Error(msg);
+        throw new Error(
+          `${msg}${requestId ? ` (ref: ${requestId})` : ""}`
+        );
       }
 
       if (!json.success || !json.data) {
         throw new Error(json.error || "The analysis returned no data. Please try again.");
       }
 
+      // Pass full result up to App — onResult is in deps so we always
+      // call the latest reference even if parent re-renders
       onResult?.({
-        data:              json.data,
-        model:             json.model,
-        processingTimeMs:  json.processing_time_ms,
-        scrapeMethod:      json.scrape_method,
-        charCount:         json.char_count,
-        partial:           json.partial,
-        requestId:         json.request_id,
+        data:             json.data,
+        model:            json.model,
+        processingTimeMs: json.processing_time_ms,
+        scrapeMethod:     json.scrape_method,
+        charCount:        json.char_count,
+        partial:          json.partial,
+        requestId:        json.request_id,
       });
 
     } catch (err) {
-      if (err.name === "AbortError") return; // user navigated away — silent
+      // AbortError = user navigated away or re-submitted — silent discard
+      if (err.name === "AbortError") return;
       setError(err.message || "An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
+  // onResult is a prop ref — must be in deps so handleSubmit sees latest version
   }, [canSubmit, tab, url, description, onResult]);
 
-  // Keyboard shortcut — Cmd/Ctrl + Enter to submit
+  // Keyboard shortcut — ⌘/Ctrl + Enter submits
+  // Plain Enter intentionally excluded — reserved for textarea newlines
   const handleKeyDown = useCallback((e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
@@ -992,7 +1011,11 @@ export default function InputPanel({ onResult, onLoadingChange }) {
                 {url && (
                   <button
                     className="url-clear"
-                    onClick={() => { setUrl(""); setError(null); urlInputRef.current?.focus(); }}
+                    onClick={() => {
+                      setUrl("");
+                      setError(null);
+                      urlInputRef.current?.focus();
+                    }}
                     aria-label="Clear URL"
                     tabIndex={0}
                   >
@@ -1068,7 +1091,7 @@ export default function InputPanel({ onResult, onLoadingChange }) {
             </div>
           )}
 
-          {/* Error */}
+          {/* Error banner */}
           {error && (
             <div
               className="input-error animate-fade-in"
@@ -1127,7 +1150,10 @@ export default function InputPanel({ onResult, onLoadingChange }) {
       </div>
 
       {/* ── HOW IT WORKS ── */}
-      <div className="how-it-works animate-fade-up delay-4" aria-label="How it works">
+      <div
+        className="how-it-works animate-fade-up delay-4"
+        aria-label="How it works"
+      >
         {HOW_STEPS.map((step, i) => (
           <div
             key={step.num}
