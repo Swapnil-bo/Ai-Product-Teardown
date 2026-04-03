@@ -8,7 +8,6 @@ import Loader from "./components/Loader";
 // ─────────────────────────────────────────────
 
 const APP_STYLES = `
-  /* ── App shell ── */
   .app {
     min-height: 100vh;
     display: flex;
@@ -29,7 +28,7 @@ const APP_STYLES = `
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border);
-    transition: border-color var(--transition-normal);
+    transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
   }
 
   .app-nav--scrolled {
@@ -44,6 +43,7 @@ const APP_STYLES = `
     cursor: pointer;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
+    text-decoration: none;
   }
 
   .app-nav__logo-icon {
@@ -54,7 +54,7 @@ const APP_STYLES = `
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     color: #fff;
     font-weight: 700;
     font-family: var(--font-mono);
@@ -144,7 +144,7 @@ const APP_STYLES = `
     background: var(--bg-elevated);
   }
 
-  /* ── Main content ── */
+  /* ── Main ── */
   .app-main {
     flex: 1;
     padding: var(--space-6) var(--space-6) var(--space-9);
@@ -152,23 +152,13 @@ const APP_STYLES = `
   }
 
   /* ── View transitions ── */
-  .app-view {
-    width: 100%;
-  }
-
   .app-view--enter {
     animation: view-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   @keyframes view-enter {
-    from {
-      opacity: 0;
-      transform: translateY(16px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   /* ── Footer ── */
@@ -196,6 +186,7 @@ const APP_STYLES = `
     width: 1px;
     height: 12px;
     background: var(--border);
+    flex-shrink: 0;
   }
 
   .app-footer__link {
@@ -233,15 +224,12 @@ const APP_STYLES = `
     .app-nav {
       padding: 0 var(--space-4);
     }
-
     .app-nav__status {
       display: none;
     }
-
     .app-main {
       padding: var(--space-4) var(--space-4) var(--space-8);
     }
-
     .app-footer {
       flex-direction: column;
       align-items: flex-start;
@@ -273,19 +261,16 @@ function useInjectStyles(css) {
 
 function useScrolled(threshold = 10) {
   const [scrolled, setScrolled] = useState(false);
-
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > threshold);
     window.addEventListener("scroll", handler, { passive: true });
     return () => window.removeEventListener("scroll", handler);
   }, [threshold]);
-
   return scrolled;
 }
 
 // ─────────────────────────────────────────────
-// Document title hook — updates tab title
-// based on current view state
+// Document title hook
 // ─────────────────────────────────────────────
 
 function useDocumentTitle(result) {
@@ -305,18 +290,16 @@ function useDocumentTitle(result) {
 export default function App() {
   useInjectStyles(APP_STYLES);
 
-  const [result,  setResult]  = useState(null);   // full teardown result from API
-  const [loading, setLoading] = useState(false);  // synced up from InputPanel
-  const [viewKey, setViewKey] = useState(0);      // increment to force re-mount + re-animate
+  const [result,  setResult]  = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [viewKey, setViewKey] = useState(0);
 
   const scrolled = useScrolled();
   useDocumentTitle(result);
 
-  // ── Handlers ──
-
   const handleResult = useCallback((res) => {
     setResult(res);
-    setViewKey((k) => k + 1); // new key = new mount = fresh enter animation
+    setViewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -335,30 +318,25 @@ export default function App() {
   return (
     <div className="app">
 
-      {/* ── NAV ── */}
       <nav
         className={`app-nav ${scrolled ? "app-nav--scrolled" : ""}`}
         aria-label="Main navigation"
       >
-        {/* Logo — always clickable to reset */}
         <div
           className="app-nav__logo"
           onClick={handleReset}
           role="button"
           tabIndex={0}
           aria-label="Go to home"
-          onKeyDown={(e) => e.key === "Enter" && handleReset()}
+          onKeyDown={(e) => { if (e.key === "Enter") handleReset(); }}
         >
-          <div className="app-nav__logo-icon" aria-hidden="true">
-            PT
-          </div>
+          <div className="app-nav__logo-icon" aria-hidden="true">PT</div>
           <span className="app-nav__logo-text">
             Product<span>Teardown</span>
           </span>
         </div>
 
         <div className="app-nav__right">
-          {/* Live status indicator */}
           <div
             className="app-nav__status"
             role="status"
@@ -366,15 +344,12 @@ export default function App() {
             aria-live="polite"
           >
             <div
-              className={`app-nav__status-dot ${
-                loading ? "app-nav__status-dot--loading" : ""
-              }`}
+              className={`app-nav__status-dot ${loading ? "app-nav__status-dot--loading" : ""}`}
               aria-hidden="true"
             />
             {loading ? "Analyzing..." : "Ready"}
           </div>
 
-          {/* New teardown button — only shown on result view */}
           {isResultView && !loading && (
             <button
               className="app-nav__new-btn animate-fade-in"
@@ -387,13 +362,9 @@ export default function App() {
         </div>
       </nav>
 
-      {/* ── MAIN ── */}
       <main className="app-main" id="main-content">
-
-        {/* Loader — portal-style fixed overlay */}
         <Loader isVisible={loading} />
 
-        {/* View — keyed so it re-mounts and re-animates on every transition */}
         <div
           key={viewKey}
           className="app-view app-view--enter"
@@ -419,7 +390,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* ── FOOTER ── */}
       <footer className="app-footer" aria-label="Site footer">
         <div className="app-footer__left">
           <span>AI Product Teardown</span>
@@ -437,7 +407,7 @@ export default function App() {
           </a>
         </div>
         <div className="app-footer__right">
-          Built by{" "}
+          {"Built by "}
           
             href="https://x.com/SwapnilHazra4"
             target="_blank"
