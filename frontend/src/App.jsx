@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+\import { useState, useCallback, useEffect } from "react";
 import InputPanel from "./components/InputPanel";
 import TeardownCard from "./components/TeardownCard";
 import Loader from "./components/Loader";
@@ -389,35 +389,23 @@ export default function App() {
           )}
         </div>
       </main>
-
       <footer className="app-footer" aria-label="Site footer">
-        <div className="app-footer__left">
-          <span>AI Product Teardown</span>
-          <div className="app-footer__divider" aria-hidden="true" />
-          <span>LLaMA 3.3 70B on Groq</span>
-          <div className="app-footer__divider" aria-hidden="true" />
-          
-            href="https://github.com/Swapnil-bo/Ai-Product-Teardown"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="app-footer__link"
-            aria-label="View source on GitHub"
-          >
-            GitHub
-          </a>
-        </div>
-        <div className="app-footer__right">
-          {"Built by "}
-          
-            href="https://x.com/SwapnilHazra4"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Swapnil Hazra on X"
-          >
-            @SwapnilHazra4
-          </a>
-        </div>
-      </footer>
+  <div className="app-footer__left">
+    <span>AI Product Teardown</span>
+    <div className="app-footer__divider" aria-hidden="true" />
+    <span>LLaMA 3.3 70B on Groq</span>
+    <div className="app-footer__divider" aria-hidden="true" />
+    <a href="https://github.com/Swapnil-bo/Ai-Product-Teardown" target="_blank" rel="noopener noreferrer" className="app-footer__link">
+      GitHub
+    </a>
+  </div>
+  <div className="app-footer__right">
+    {"Built by "}
+    <a href="https://x.com/SwapnilHazra4" target="_blank" rel="noopener noreferrer">
+      @SwapnilHazra4
+    </a>
+  </div>
+</footer>
 
     </div>
   );
