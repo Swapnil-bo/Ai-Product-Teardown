@@ -298,6 +298,7 @@ export default function App() {
   useDocumentTitle(result);
 
   const handleResult = useCallback((res) => {
+    setLoading(false);
     setResult(res);
     setViewKey((k) => k + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
