@@ -353,10 +353,4 @@ Part of my **100 Days of Vibe Coding** challenge — shipping one real, deployed
 
 ---
 
-## License
-
-MIT — use it, fork it, ship it.
-
----
-
 *Built end to end in one session. Zero to deployed.*
