@@ -345,8 +345,6 @@ The system prompt (`backend/prompts.py`) is the core of this project. Key decisi
 
 **Swapnil Hazra** — AI Engineer
 
-Part of my **100 Days of Vibe Coding** challenge — shipping one real, deployed project every day.
-
 - 🐦 X: [@SwapnilHazra4](https://x.com/SwapnilHazra4)
 - 💼 GitHub: [@Swapnil-bo](https://github.com/Swapnil-bo)
 - 🌐 Portfolio: [swapnilhazra.vercel.app](https://swapnilhazra.vercel.app)
