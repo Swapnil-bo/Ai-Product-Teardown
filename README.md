@@ -343,7 +343,7 @@ The system prompt (`backend/prompts.py`) is the core of this project. Key decisi
 
 ## Built By
 
-**Swapnil Hazra** — AI Engineer, Vibe Coder
+**Swapnil Hazra** — AI Engineer
 
 Part of my **100 Days of Vibe Coding** challenge — shipping one real, deployed project every day.
 
